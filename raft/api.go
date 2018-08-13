@@ -1,5 +1,7 @@
 package raft
 
+import "strconv"
+
 type RaftNodeInfo struct {
 	ClusterSize    int        `json:"clusterSize"`
 	Role           string     `json:"role"`
@@ -36,4 +38,8 @@ func (s *PublicRaftAPI) Leader() (string, error) {
 		return "", err
 	}
 	return addr.nodeId.String(), nil
+}
+
+func (s *PublicRaftAPI) ClusterSize() string {
+	return strconv.Itoa(s.raftService.raftProtocolManager.NodeInfo().ClusterSize)
 }

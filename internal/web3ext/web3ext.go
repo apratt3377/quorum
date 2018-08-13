@@ -628,6 +628,10 @@ web3._extend({
                new web3._extend.Property({
                        name: 'leader',
                        getter: 'raft_leader'
+               }),
+               new web3._extend.Property({
+                       name: 'clusterSize',
+                       getter: 'raft_clusterSize'
                })
        ]
 })
