@@ -18,6 +18,7 @@ package miner
 
 import (
 	"sync"
+	"time"
 
 	"sync/atomic"
 
@@ -49,7 +50,10 @@ func NewCpuAgent(chain consensus.ChainReader, engine consensus.Engine) *CpuAgent
 	return miner
 }
 
-func (self *CpuAgent) Work() chan<- *Work            { return self.workCh }
+func (self *CpuAgent) Work() chan<- *Work {
+	log.Trace("work function called on agent-#######", "time", time.Now().String())
+	return self.workCh
+}
 func (self *CpuAgent) SetReturnCh(ch chan<- *Result) { self.returnCh = ch }
 
 func (self *CpuAgent) Stop() {
@@ -85,6 +89,7 @@ out:
 				close(self.quitCurrentOp)
 			}
 			self.quitCurrentOp = make(chan struct{})
+			log.Trace("starting to mine in update-#######", "time", time.Now().String())
 			go self.mine(work, self.quitCurrentOp)
 			self.mu.Unlock()
 		case <-self.stop:
@@ -100,6 +105,7 @@ out:
 }
 
 func (self *CpuAgent) mine(work *Work, stop <-chan struct{}) {
+	log.Trace("starting the mining seal-#########", "time", time.Now().String())
 	if result, err := self.engine.Seal(self.chain, work.Block, stop); result != nil {
 		log.Info("Successfully sealed new block", "number", result.Number(), "hash", result.Hash())
 		self.returnCh <- &Result{work, result}

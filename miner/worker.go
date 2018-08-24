@@ -150,7 +150,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 		unconfirmed:    newUnconfirmedBlocks(eth.BlockChain(), miningLogAtDepth),
 	}
 
-	if _, ok := engine.(consensus.Istanbul); ok || !config.IsQuorum {
+	if _, ok := engine.(consensus.Istanbul); ok || !config.IsQuorum || config.Clique != nil {
 		// Subscribe TxPreEvent for tx pool
 		worker.txSub = eth.TxPool().SubscribeTxPreEvent(worker.txCh)
 		// Subscribe events for blockchain
@@ -245,6 +245,7 @@ func (self *worker) register(agent Agent) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.agents[agent] = struct{}{}
+	log.Trace("registering worker receiver channel-########")
 	agent.SetReturnCh(self.recv)
 }
 
@@ -287,6 +288,11 @@ func (self *worker) update() {
 
 				self.current.commitTransactions(self.mux, txset, self.chain, self.coinbase)
 				self.currentMu.Unlock()
+			} else {
+				// If we're mining, but nothing is being processed, wake on new transactions
+				if self.config.Clique != nil && self.config.Clique.Period == 0 {
+					self.commitNewWork()
+				}
 			}
 
 		// System stopped
@@ -303,8 +309,10 @@ func (self *worker) update() {
 func (self *worker) wait() {
 	for {
 		mustCommitNewWork := true
+		log.Trace("worker wait-##############", "receive size", len(self.recv))
 		for result := range self.recv {
 			atomic.AddInt32(&self.atWork, -1)
+			log.Trace("worker result-############", "res", result)
 
 			if result == nil {
 				continue
@@ -314,6 +322,7 @@ func (self *worker) wait() {
 
 			// Update the block hash in all logs since it is now available and not when the
 			// receipt/log of individual transactions were created.
+			log.Trace("updating block hash-###############", "time", time.Now().String())
 			for _, r := range append(work.receipts, work.privateReceipts...) {
 				for _, l := range r.Logs {
 					l.BlockHash = block.Hash()
@@ -324,10 +333,12 @@ func (self *worker) wait() {
 			}
 
 			// write private transacions
+			log.Trace("writing private transactions-############", "time", time.Now().String())
 			privateStateRoot, _ := work.privateState.CommitTo(self.chainDb, self.config.IsEIP158(block.Number()))
 			core.WritePrivateStateRoot(self.chainDb, block.Root(), privateStateRoot)
 			allReceipts := mergeReceipts(work.receipts, work.privateReceipts)
 
+			log.Trace("writing block and state-#############", "time", time.Now().String())
 			stat, err := self.chain.WriteBlockAndState(block, allReceipts, work.state)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
@@ -339,6 +350,7 @@ func (self *worker) wait() {
 				mustCommitNewWork = false
 			}
 			// Broadcast the block and announce chain insertion event
+			log.Trace("broadcasting block-##############", "time", time.Now().String())
 			self.mux.Post(core.NewMinedBlockEvent{Block: block})
 			var (
 				events []interface{}
@@ -348,12 +360,15 @@ func (self *worker) wait() {
 			if stat == core.CanonStatTy {
 				events = append(events, core.ChainHeadEvent{Block: block})
 			}
+			log.Trace("post chain events-#############", "time", time.Now().String())
 			self.chain.PostChainEvents(events, logs)
 
 			// Insert the block into the set of pending ones to wait for confirmations
+			log.Trace("insert block-#############", "time", time.Now().String())
 			self.unconfirmed.Insert(block.NumberU64(), block.Hash())
 
 			if mustCommitNewWork {
+				log.Trace("commit new work-#########", "time", time.Now().String())
 				self.commitNewWork()
 			}
 		}
@@ -386,6 +401,7 @@ func (self *worker) push(work *Work) {
 	if atomic.LoadInt32(&self.mining) != 1 {
 		return
 	}
+	log.Trace("push-###############", "agentSize", len(self.agents))
 	for agent := range self.agents {
 		atomic.AddInt32(&self.atWork, 1)
 		if ch := agent.Work(); ch != nil {
@@ -435,6 +451,7 @@ func (self *worker) commitNewWork() {
 	self.currentMu.Lock()
 	defer self.currentMu.Unlock()
 
+	log.Trace("start commitnewwork-#######", "time", time.Now().String())
 	tstart := time.Now()
 	parent := self.chain.CurrentBlock()
 
@@ -462,6 +479,7 @@ func (self *worker) commitNewWork() {
 	if atomic.LoadInt32(&self.mining) == 1 {
 		header.Coinbase = self.coinbase
 	}
+	log.Trace("startign to prepare-########", "time", time.Now().String())
 	if err := self.engine.Prepare(self.chain, header); err != nil {
 		log.Error("Failed to prepare header for mining", "err", err)
 		return
@@ -509,6 +527,7 @@ func (self *worker) commitNewWork() {
 		}
 		if err := self.commitUncle(work, uncle.Header()); err != nil {
 			log.Trace("Bad uncle found and will be removed", "hash", hash)
+			log.Trace("bad uncle error", "error", err)
 			log.Trace(fmt.Sprint(uncle))
 
 			badUncles = append(badUncles, hash)
@@ -521,6 +540,7 @@ func (self *worker) commitNewWork() {
 		delete(self.possibleUncles, hash)
 	}
 	// Create the new block to seal with the consensus engine
+	log.Trace("going to seal-adjfalkekwiofjwiea")
 	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.txs, uncles, work.receipts); err != nil {
 		log.Error("Failed to finalize block for sealing", "err", err)
 		return
